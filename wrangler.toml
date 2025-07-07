@@ -1,0 +1,16 @@
+# ==============================================================================
+# FILE: wrangler.toml (Konfigurasi Proyek Cloudflare)
+# ==============================================================================
+# TUJUAN: File ini adalah "otak" dari proyek Worker Anda. Ia mendefinisikan
+#         nama worker, file utama, tanggal kompatibilitas, dan yang paling
+#         penting, menghubungkan Worker kita ke D1 Database.
+
+name = "sekolah-pintar-api" # Nama worker Anda saat di-deploy
+main = "cloudflare/worker.ts" # Path ke file worker utama kita
+compatibility_date = "2025-07-07" # Gunakan tanggal hari ini atau yang lebih baru
+
+# Bagian ini adalah "lem" yang menyambungkan Worker dengan D1
+[[d1_databases]]
+binding = "DB" # Ini adalah nama variabel yang akan kita gunakan di dalam kode Worker untuk mengakses database.
+database_name = "sekolah-pintar-hiji-db" # Nama database yang kita buat tadi.
+database_id = "f9d801ca-a1c7-408f-a13b-5f9b26610a20" # !!! PENTING: GANTI DENGAN DATABASE_ID ANDA !!!
