@@ -1,13 +1,26 @@
 // ==============================================================================
-// FILE: app/api/[[...route]]/route.ts (API Proxy)
+// FILE: app/api/[[...route]]/route.ts (API Proxy) - DIPERBAIKI
 // ==============================================================================
-// TUJUAN: Selama development, file ini akan meneruskan semua request dari
-//         /api/* di Next.js ke Cloudflare Worker kita yang berjalan lokal.
-//         Ini cara mudah untuk menghindari masalah CORS saat development.
+// TUJUAN: Meneruskan semua request dari /api/* di Next.js ke Cloudflare Worker
+//         dan memastikan route ini kompatibel dengan Edge Runtime Cloudflare.
 
+// PERBAIKAN: Tambahkan baris ini untuk memberitahu Next.js agar menjalankan
+// route ini di Edge Runtime, yang wajib untuk Cloudflare Pages.
+export const runtime = 'edge';
+
+// Fungsi untuk menangani request GET
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const workerUrl = `${process.env.CLOUDFLARE_WORKER_URL}${url.pathname}${url.search}`;
+  
+  // Ambil URL worker dari environment variable
+  // Gunakan NEXT_PUBLIC_API_URL saat di-deploy, dan CLOUDFLARE_WORKER_URL untuk local dev
+  const workerBaseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.CLOUDFLARE_WORKER_URL;
+
+  if (!workerBaseUrl) {
+    return new Response('Worker URL not configured', { status: 500 });
+  }
+
+  const workerUrl = `${workerBaseUrl}${url.pathname}${url.search}`;
 
   return fetch(workerUrl, {
     headers: request.headers,
@@ -15,9 +28,17 @@ export async function GET(request: Request) {
   });
 }
 
+// Fungsi untuk menangani request POST
 export async function POST(request: Request) {
   const url = new URL(request.url);
-  const workerUrl = `${process.env.CLOUDFLARE_WORKER_URL}${url.pathname}${url.search}`;
+
+  const workerBaseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.CLOUDFLARE_WORKER_URL;
+
+  if (!workerBaseUrl) {
+    return new Response('Worker URL not configured', { status: 500 });
+  }
+
+  const workerUrl = `${workerBaseUrl}${url.pathname}${url.search}`;
 
   return fetch(workerUrl, {
     method: 'POST',
@@ -26,5 +47,3 @@ export async function POST(request: Request) {
     redirect: 'manual',
   });
 }
-
-// Anda bisa menambahkan metode lain (PUT, DELETE, etc.) jika dibutuhkan
