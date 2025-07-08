@@ -1,8 +1,8 @@
 // ==============================================================================
 // FILE: cloudflare/worker.ts (Backend API dengan D1 & JWT) - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Mengatur httpOnly cookie untuk keamanan dan menyertakan peran (role)
-//         dalam payload JWT.
+// TUJUAN: Memperbaiki masalah CORS dengan menentukan domain frontend yang diizinkan
+//         secara eksplisit melalui environment variable.
 
 import { Hono } from 'hono';
 import { sign } from 'hono/jwt';
@@ -13,12 +13,14 @@ type User = {
   email: string;
   name: string;
   password_hash: string;
-  role: string; // Kolom role sekarang ada di tipe data
+  role: string;
 };
 
 export interface Env {
   DB: D1Database;
   JWT_SECRET: string;
+  // PERUBAHAN: Tambahkan variabel untuk domain frontend yang diizinkan
+  ALLOWED_ORIGIN: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -26,7 +28,9 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware CORS
 app.use('*', async (c, next) => {
   await next();
-  c.header('Access-Control-Allow-Origin', '*'); // Ganti dengan URL frontend Anda di produksi
+  // PERBAIKAN: Gunakan variabel lingkungan untuk Origin, bukan wildcard '*'
+  const origin = c.env.ALLOWED_ORIGIN || '*';
+  c.header('Access-Control-Allow-Origin', origin);
   c.header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   c.header('Access-Control-Allow-Credentials', 'true');
@@ -34,8 +38,6 @@ app.use('*', async (c, next) => {
 
 // Handler untuk pre-flight request (OPTIONS) dari browser
 app.options('*', (c) => {
-  // PERBAIKAN: Menggunakan c.body(null, 204) untuk mengirim respons 'No Content'
-  // yang sesuai dengan standar CORS pre-flight.
   return c.body(null, 204);
 });
 
@@ -64,16 +66,15 @@ app.post('/api/login', async (c) => {
     const payload = {
       sub: user.id,
       name: user.name,
-      role: user.role, // PERUBAHAN: Sertakan peran dalam token
+      role: user.role,
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24, // 24 jam
     };
     const secret = c.env.JWT_SECRET;
     const token = await sign(payload, secret);
 
-    // PERUBAHAN: Atur token sebagai httpOnly cookie
     setCookie(c, 'authToken', token, {
       httpOnly: true,
-      secure: true, // Selalu true di produksi
+      secure: true,
       sameSite: 'Lax',
       path: '/',
       maxAge: 60 * 60 * 24, // 1 hari

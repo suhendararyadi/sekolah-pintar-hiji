@@ -2093,7 +2093,8 @@ var sign2 = Jwt.sign;
 var app = new Hono2();
 app.use("*", async (c, next) => {
   await next();
-  c.header("Access-Control-Allow-Origin", "*");
+  const origin = c.env.ALLOWED_ORIGIN || "*";
+  c.header("Access-Control-Allow-Origin", origin);
   c.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   c.header("Access-Control-Allow-Credentials", "true");
@@ -2120,7 +2121,6 @@ app.post("/api/login", async (c) => {
       sub: user.id,
       name: user.name,
       role: user.role,
-      // PERUBAHAN: Sertakan peran dalam token
       exp: Math.floor(Date.now() / 1e3) + 60 * 60 * 24
       // 24 jam
     };
@@ -2129,7 +2129,6 @@ app.post("/api/login", async (c) => {
     setCookie(c, "authToken", token, {
       httpOnly: true,
       secure: true,
-      // Selalu true di produksi
       sameSite: "Lax",
       path: "/",
       maxAge: 60 * 60 * 24
