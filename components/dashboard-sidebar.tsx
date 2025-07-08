@@ -1,3 +1,9 @@
+// ==============================================================================
+// FILE: components/dashboard-sidebar.tsx
+// ==============================================================================
+// TUJUAN: Menampilkan menu navigasi utama di sisi kiri dan menampilkan
+//         menu tambahan khusus untuk peran 'admin'.
+
 import Link from "next/link";
 import {
   Bell,
@@ -6,12 +12,10 @@ import {
   Package,
   Package2,
   BookOpen,
-  // PERBAIKAN: Hapus 'Users' karena tidak digunakan
   CalendarDays,
+  Users,
 } from "lucide-react";
 
-// PERBAIKAN: Hapus import Badge karena file-nya belum ada
-// import { Badge } from "@/components/ui/badge"; 
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,8 +24,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { SessionPayload } from "@/lib/session";
 
-export function DashboardSidebar() {
+// Menerima prop 'user' untuk menampilkan menu berdasarkan peran
+export function DashboardSidebar({ user }: { user: SessionPayload | null }) {
   return (
     <div className="hidden border-r bg-muted/40 md:block">
       <div className="flex h-full max-h-screen flex-col gap-2">
@@ -56,8 +62,7 @@ export function DashboardSidebar() {
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary"
             >
               <Package className="h-4 w-4" />
-              Tugas{" "}
-              {/* PERBAIKAN: Hapus komponen Badge untuk sementara */}
+              Tugas
             </Link>
             <Link
               href="#"
@@ -73,6 +78,17 @@ export function DashboardSidebar() {
               <LineChart className="h-4 w-4" />
               Absensi
             </Link>
+
+            {/* Tampilkan menu ini hanya jika peran pengguna adalah 'admin' */}
+            {user?.role === 'admin' && (
+              <Link
+                href="#"
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary"
+              >
+                <Users className="h-4 w-4" />
+                Manajemen Pengguna
+              </Link>
+            )}
           </nav>
         </div>
         <div className="mt-auto p-4">
