@@ -1531,6 +1531,37 @@ var Hono2 = class extends Hono {
 };
 
 // node_modules/hono/dist/utils/cookie.js
+var validCookieNameRegEx = /^[\w!#$%&'*.^`|~+-]+$/;
+var validCookieValueRegEx = /^[ !#-:<-[\]-~]*$/;
+var parse = /* @__PURE__ */ __name((cookie, name) => {
+  if (name && cookie.indexOf(name) === -1) {
+    return {};
+  }
+  const pairs = cookie.trim().split(";");
+  const parsedCookie = {};
+  for (let pairStr of pairs) {
+    pairStr = pairStr.trim();
+    const valueStartPos = pairStr.indexOf("=");
+    if (valueStartPos === -1) {
+      continue;
+    }
+    const cookieName = pairStr.substring(0, valueStartPos).trim();
+    if (name && name !== cookieName || !validCookieNameRegEx.test(cookieName)) {
+      continue;
+    }
+    let cookieValue = pairStr.substring(valueStartPos + 1).trim();
+    if (cookieValue.startsWith('"') && cookieValue.endsWith('"')) {
+      cookieValue = cookieValue.slice(1, -1);
+    }
+    if (validCookieValueRegEx.test(cookieValue)) {
+      parsedCookie[cookieName] = cookieValue.indexOf("%") !== -1 ? tryDecode(cookieValue, decodeURIComponent_) : cookieValue;
+      if (name) {
+        break;
+      }
+    }
+  }
+  return parsedCookie;
+}, "parse");
 var _serialize = /* @__PURE__ */ __name((name, value, opt = {}) => {
   let cookie = `${name}=${value}`;
   if (name.startsWith("__Secure-") && !opt.secure) {
@@ -1595,6 +1626,27 @@ var serialize = /* @__PURE__ */ __name((name, value, opt) => {
 }, "serialize");
 
 // node_modules/hono/dist/helper/cookie/index.js
+var getCookie = /* @__PURE__ */ __name((c, key, prefix) => {
+  const cookie = c.req.raw.headers.get("Cookie");
+  if (typeof key === "string") {
+    if (!cookie) {
+      return void 0;
+    }
+    let finalKey = key;
+    if (prefix === "secure") {
+      finalKey = "__Secure-" + key;
+    } else if (prefix === "host") {
+      finalKey = "__Host-" + key;
+    }
+    const obj2 = parse(cookie, finalKey);
+    return obj2[finalKey];
+  }
+  if (!cookie) {
+    return {};
+  }
+  const obj = parse(cookie);
+  return obj;
+}, "getCookie");
 var setCookie = /* @__PURE__ */ __name((c, name, value, opt) => {
   let cookie;
   if (opt?.prefix === "secure") {
@@ -1611,6 +1663,11 @@ var setCookie = /* @__PURE__ */ __name((c, name, value, opt) => {
   }
   c.header("Set-Cookie", cookie, { append: true });
 }, "setCookie");
+var deleteCookie = /* @__PURE__ */ __name((c, name, opt) => {
+  const deletedCookie = getCookie(c, name, opt?.prefix);
+  setCookie(c, name, "", { ...opt, maxAge: 0 });
+  return deletedCookie;
+}, "deleteCookie");
 
 // node_modules/hono/dist/utils/encode.js
 var decodeBase64Url = /* @__PURE__ */ __name((str) => {
@@ -2143,6 +2200,12 @@ app.post("/api/login", async (c) => {
     console.error("Login error:", errorMessage);
     return c.json({ success: false, message: "Terjadi kesalahan pada server." }, 500);
   }
+});
+app.post("/api/logout", async (c) => {
+  deleteCookie(c, "authToken", {
+    path: "/"
+  });
+  return c.json({ success: true, message: "Logout berhasil." });
 });
 var worker_default = app;
 

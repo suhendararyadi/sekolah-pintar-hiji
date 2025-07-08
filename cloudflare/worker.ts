@@ -1,12 +1,11 @@
 // ==============================================================================
 // FILE: cloudflare/worker.ts (Backend API dengan D1 & JWT) - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Memperbaiki masalah CORS dengan menentukan domain frontend yang diizinkan
-//         secara eksplisit melalui environment variable.
+// TUJUAN: Menambahkan endpoint /api/logout untuk menghapus cookie otentikasi.
 
 import { Hono } from 'hono';
 import { sign } from 'hono/jwt';
-import { setCookie } from 'hono/cookie';
+import { setCookie, deleteCookie } from 'hono/cookie';
 
 type User = {
   id: number;
@@ -19,7 +18,6 @@ type User = {
 export interface Env {
   DB: D1Database;
   JWT_SECRET: string;
-  // PERUBAHAN: Tambahkan variabel untuk domain frontend yang diizinkan
   ALLOWED_ORIGIN: string;
 }
 
@@ -28,7 +26,6 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware CORS
 app.use('*', async (c, next) => {
   await next();
-  // PERBAIKAN: Gunakan variabel lingkungan untuk Origin, bukan wildcard '*'
   const origin = c.env.ALLOWED_ORIGIN || '*';
   c.header('Access-Control-Allow-Origin', origin);
   c.header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -36,7 +33,6 @@ app.use('*', async (c, next) => {
   c.header('Access-Control-Allow-Credentials', 'true');
 });
 
-// Handler untuk pre-flight request (OPTIONS) dari browser
 app.options('*', (c) => {
   return c.body(null, 204);
 });
@@ -91,5 +87,15 @@ app.post('/api/login', async (c) => {
     return c.json({ success: false, message: 'Terjadi kesalahan pada server.' }, 500);
   }
 });
+
+// PERUBAHAN: Tambahkan endpoint logout
+app.post('/api/logout', async (c) => {
+  // Hapus cookie dengan mengatur maxAge ke 0 atau nilai negatif
+  deleteCookie(c, 'authToken', {
+    path: '/',
+  });
+  return c.json({ success: true, message: 'Logout berhasil.' });
+});
+
 
 export default app;
