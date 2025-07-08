@@ -1530,6 +1530,88 @@ var Hono2 = class extends Hono {
   }
 };
 
+// node_modules/hono/dist/utils/cookie.js
+var _serialize = /* @__PURE__ */ __name((name, value, opt = {}) => {
+  let cookie = `${name}=${value}`;
+  if (name.startsWith("__Secure-") && !opt.secure) {
+    throw new Error("__Secure- Cookie must have Secure attributes");
+  }
+  if (name.startsWith("__Host-")) {
+    if (!opt.secure) {
+      throw new Error("__Host- Cookie must have Secure attributes");
+    }
+    if (opt.path !== "/") {
+      throw new Error('__Host- Cookie must have Path attributes with "/"');
+    }
+    if (opt.domain) {
+      throw new Error("__Host- Cookie must not have Domain attributes");
+    }
+  }
+  if (opt && typeof opt.maxAge === "number" && opt.maxAge >= 0) {
+    if (opt.maxAge > 3456e4) {
+      throw new Error(
+        "Cookies Max-Age SHOULD NOT be greater than 400 days (34560000 seconds) in duration."
+      );
+    }
+    cookie += `; Max-Age=${opt.maxAge | 0}`;
+  }
+  if (opt.domain && opt.prefix !== "host") {
+    cookie += `; Domain=${opt.domain}`;
+  }
+  if (opt.path) {
+    cookie += `; Path=${opt.path}`;
+  }
+  if (opt.expires) {
+    if (opt.expires.getTime() - Date.now() > 3456e7) {
+      throw new Error(
+        "Cookies Expires SHOULD NOT be greater than 400 days (34560000 seconds) in the future."
+      );
+    }
+    cookie += `; Expires=${opt.expires.toUTCString()}`;
+  }
+  if (opt.httpOnly) {
+    cookie += "; HttpOnly";
+  }
+  if (opt.secure) {
+    cookie += "; Secure";
+  }
+  if (opt.sameSite) {
+    cookie += `; SameSite=${opt.sameSite.charAt(0).toUpperCase() + opt.sameSite.slice(1)}`;
+  }
+  if (opt.priority) {
+    cookie += `; Priority=${opt.priority}`;
+  }
+  if (opt.partitioned) {
+    if (!opt.secure) {
+      throw new Error("Partitioned Cookie must have Secure attributes");
+    }
+    cookie += "; Partitioned";
+  }
+  return cookie;
+}, "_serialize");
+var serialize = /* @__PURE__ */ __name((name, value, opt) => {
+  value = encodeURIComponent(value);
+  return _serialize(name, value, opt);
+}, "serialize");
+
+// node_modules/hono/dist/helper/cookie/index.js
+var setCookie = /* @__PURE__ */ __name((c, name, value, opt) => {
+  let cookie;
+  if (opt?.prefix === "secure") {
+    cookie = serialize("__Secure-" + name, value, { path: "/", ...opt, secure: true });
+  } else if (opt?.prefix === "host") {
+    cookie = serialize("__Host-" + name, value, {
+      ...opt,
+      path: "/",
+      secure: true,
+      domain: void 0
+    });
+  } else {
+    cookie = serialize(name, value, { path: "/", ...opt });
+  }
+  c.header("Set-Cookie", cookie, { append: true });
+}, "setCookie");
+
 // node_modules/hono/dist/utils/encode.js
 var decodeBase64Url = /* @__PURE__ */ __name((str) => {
   return decodeBase64(str.replace(/_|-/g, (m) => ({ _: "/", "-": "+" })[m] ?? m));
@@ -2014,6 +2096,7 @@ app.use("*", async (c, next) => {
   c.header("Access-Control-Allow-Origin", "*");
   c.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  c.header("Access-Control-Allow-Credentials", "true");
 });
 app.options("*", (c) => {
   return c.body(null, 204);
@@ -2035,18 +2118,26 @@ app.post("/api/login", async (c) => {
     }
     const payload = {
       sub: user.id,
-      // Subject (user id)
       name: user.name,
       role: user.role,
+      // PERUBAHAN: Sertakan peran dalam token
       exp: Math.floor(Date.now() / 1e3) + 60 * 60 * 24
-      // Token berlaku 24 jam
+      // 24 jam
     };
     const secret = c.env.JWT_SECRET;
     const token = await sign2(payload, secret);
+    setCookie(c, "authToken", token, {
+      httpOnly: true,
+      secure: true,
+      // Selalu true di produksi
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 60 * 60 * 24
+      // 1 hari
+    });
     return c.json({
       success: true,
-      message: "Login berhasil!",
-      token
+      message: "Login berhasil!"
     });
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : "Terjadi kesalahan tidak dikenal.";
