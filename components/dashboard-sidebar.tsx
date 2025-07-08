@@ -1,8 +1,7 @@
 // ==============================================================================
-// FILE: components/dashboard-sidebar.tsx
+// FILE: components/dashboard-sidebar.tsx - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Menampilkan menu navigasi utama di sisi kiri dan menampilkan
-//         menu tambahan khusus untuk peran 'admin'.
+// TUJUAN: Memperbaiki error dengan menambahkan semua import yang dibutuhkan.
 
 import Link from "next/link";
 import {
@@ -82,7 +81,7 @@ export function DashboardSidebar({ user }: { user: SessionPayload | null }) {
             {/* Tampilkan menu ini hanya jika peran pengguna adalah 'admin' */}
             {user?.role === 'admin' && (
               <Link
-                href="#"
+                href="/dashboard/users"
                 className="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary"
               >
                 <Users className="h-4 w-4" />
