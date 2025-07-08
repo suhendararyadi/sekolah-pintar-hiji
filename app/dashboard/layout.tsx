@@ -8,10 +8,13 @@ import { getCurrentUser } from "@/lib/session";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 
+// PERBAIKAN: Tambahkan baris ini untuk memberitahu Next.js agar menjalankan
+// rute ini di Edge Runtime, yang wajib untuk Cloudflare Pages.
+export const runtime = 'edge';
+
 export default async function DashboardLayout({
   children,
 }: Readonly<{
-  // PERBAIKAN: Mengganti React.Node menjadi React.ReactNode
   children: React.ReactNode;
 }>) {
   const user = await getCurrentUser();
