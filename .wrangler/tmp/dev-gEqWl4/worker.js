@@ -2146,17 +2146,105 @@ var verify2 = Jwt.verify;
 var decode2 = Jwt.decode;
 var sign2 = Jwt.sign;
 
+// node_modules/hono/dist/middleware/cors/index.js
+var cors = /* @__PURE__ */ __name((options) => {
+  const defaults = {
+    origin: "*",
+    allowMethods: ["GET", "HEAD", "PUT", "POST", "DELETE", "PATCH"],
+    allowHeaders: [],
+    exposeHeaders: []
+  };
+  const opts = {
+    ...defaults,
+    ...options
+  };
+  const findAllowOrigin = ((optsOrigin) => {
+    if (typeof optsOrigin === "string") {
+      if (optsOrigin === "*") {
+        return () => optsOrigin;
+      } else {
+        return (origin) => optsOrigin === origin ? origin : null;
+      }
+    } else if (typeof optsOrigin === "function") {
+      return optsOrigin;
+    } else {
+      return (origin) => optsOrigin.includes(origin) ? origin : null;
+    }
+  })(opts.origin);
+  const findAllowMethods = ((optsAllowMethods) => {
+    if (typeof optsAllowMethods === "function") {
+      return optsAllowMethods;
+    } else if (Array.isArray(optsAllowMethods)) {
+      return () => optsAllowMethods;
+    } else {
+      return () => [];
+    }
+  })(opts.allowMethods);
+  return /* @__PURE__ */ __name(async function cors2(c, next) {
+    function set(key, value) {
+      c.res.headers.set(key, value);
+    }
+    __name(set, "set");
+    const allowOrigin = findAllowOrigin(c.req.header("origin") || "", c);
+    if (allowOrigin) {
+      set("Access-Control-Allow-Origin", allowOrigin);
+    }
+    if (opts.origin !== "*") {
+      const existingVary = c.req.header("Vary");
+      if (existingVary) {
+        set("Vary", existingVary);
+      } else {
+        set("Vary", "Origin");
+      }
+    }
+    if (opts.credentials) {
+      set("Access-Control-Allow-Credentials", "true");
+    }
+    if (opts.exposeHeaders?.length) {
+      set("Access-Control-Expose-Headers", opts.exposeHeaders.join(","));
+    }
+    if (c.req.method === "OPTIONS") {
+      if (opts.maxAge != null) {
+        set("Access-Control-Max-Age", opts.maxAge.toString());
+      }
+      const allowMethods = findAllowMethods(c.req.header("origin") || "", c);
+      if (allowMethods.length) {
+        set("Access-Control-Allow-Methods", allowMethods.join(","));
+      }
+      let headers = opts.allowHeaders;
+      if (!headers?.length) {
+        const requestHeaders = c.req.header("Access-Control-Request-Headers");
+        if (requestHeaders) {
+          headers = requestHeaders.split(/\s*,\s*/);
+        }
+      }
+      if (headers?.length) {
+        set("Access-Control-Allow-Headers", headers.join(","));
+        c.res.headers.append("Vary", "Access-Control-Request-Headers");
+      }
+      c.res.headers.delete("Content-Length");
+      c.res.headers.delete("Content-Type");
+      return new Response(null, {
+        headers: c.res.headers,
+        status: 204,
+        statusText: "No Content"
+      });
+    }
+    await next();
+  }, "cors2");
+}, "cors");
+
 // cloudflare/worker.ts
 var app = new Hono2();
-app.use("*", async (c, next) => {
-  const origin = c.env.ALLOWED_ORIGIN || "*";
-  c.header("Access-Control-Allow-Origin", origin);
-  c.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  c.header("Access-Control-Allow-Credentials", "true");
-  await next();
+app.use("*", (c, next) => {
+  const corsMiddleware = cors({
+    origin: c.env.ALLOWED_ORIGIN || "*",
+    allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["POST", "GET", "PUT", "DELETE", "OPTIONS"],
+    credentials: true
+  });
+  return corsMiddleware(c, next);
 });
-app.options("*", (c) => c.body(null, 204));
 var authMiddleware = /* @__PURE__ */ __name(async (c, next) => {
   const token = getCookie(c, "authToken") || c.req.header("Authorization")?.split(" ")[1];
   if (!token) {
@@ -2172,15 +2260,20 @@ var authMiddleware = /* @__PURE__ */ __name(async (c, next) => {
   }
 }, "authMiddleware");
 app.post("/api/login", async (c) => {
-  const { email, password } = await c.req.json();
-  if (!email || !password) return c.json({ success: false, message: "Email dan password harus diisi." }, 400);
-  const user = await c.env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first();
-  if (!user) return c.json({ success: false, message: "Email tidak ditemukan." }, 401);
-  if (password !== user.password_hash) return c.json({ success: false, message: "Password salah." }, 401);
-  const payload = { sub: user.id, name: user.name, role: user.role, exp: Math.floor(Date.now() / 1e3) + 60 * 60 * 24 };
-  const token = await sign2(payload, c.env.JWT_SECRET);
-  setCookie(c, "authToken", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 });
-  return c.json({ success: true, message: "Login berhasil!" });
+  try {
+    const { email, password } = await c.req.json();
+    if (!email || !password) return c.json({ success: false, message: "Email dan password harus diisi." }, 400);
+    const user = await c.env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first();
+    if (!user) return c.json({ success: false, message: "Email tidak ditemukan." }, 401);
+    if (password !== user.password_hash) return c.json({ success: false, message: "Password salah." }, 401);
+    const payload = { sub: user.id, name: user.name, role: user.role, exp: Math.floor(Date.now() / 1e3) + 60 * 60 * 24 };
+    const token = await sign2(payload, c.env.JWT_SECRET);
+    setCookie(c, "authToken", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 });
+    return c.json({ success: true, message: "Login berhasil!" });
+  } catch (e) {
+    console.error("Login Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
+  }
 });
 app.post("/api/logout", async (c) => {
   deleteCookie(c, "authToken", { path: "/" });
@@ -2188,15 +2281,72 @@ app.post("/api/logout", async (c) => {
 });
 app.get("/api/users", authMiddleware, async (c) => {
   const user = c.get("user");
-  if (user.role !== "admin") {
-    return c.json({ success: false, message: "Forbidden" }, 403);
-  }
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
   try {
     const { results } = await c.env.DB.prepare("SELECT id, name, email, role, created_at FROM users").all();
     return c.json({ success: true, users: results });
-  } catch (err) {
-    console.error("Fetch users error:", err);
-    return c.json({ success: false, message: "Failed to fetch users" }, 500);
+  } catch (e) {
+    console.error("Fetch Users Error: ", e);
+    return c.json({ success: false, message: "Gagal mengambil data pengguna" }, 500);
+  }
+});
+app.post("/api/users", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  try {
+    const { name, email, password, role } = await c.req.json();
+    if (!name || !email || !password || !role) {
+      return c.json({ success: false, message: "Semua field harus diisi" }, 400);
+    }
+    const password_hash = password;
+    await c.env.DB.prepare(
+      "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)"
+    ).bind(name, email, password_hash, role).run();
+    return c.json({ success: true, message: "Pengguna berhasil dibuat" }, 201);
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      return c.json({ success: false, message: "Email sudah terdaftar" }, 409);
+    }
+    console.error("Create User Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
+  }
+});
+app.put("/api/users/:id", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  const userId = c.req.param("id");
+  try {
+    const { name, email, role } = await c.req.json();
+    if (!name || !email || !role) {
+      return c.json({ success: false, message: "Nama, email, dan peran harus diisi" }, 400);
+    }
+    await c.env.DB.prepare(
+      "UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?"
+    ).bind(name, email, role, userId).run();
+    return c.json({ success: true, message: "Pengguna berhasil diperbarui" });
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      return c.json({ success: false, message: "Email sudah digunakan oleh pengguna lain" }, 409);
+    }
+    console.error("Update User Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
+  }
+});
+app.delete("/api/users/:id", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  const userId = c.req.param("id");
+  if (user.sub === parseInt(userId)) {
+    return c.json({ success: false, message: "Anda tidak bisa menghapus akun Anda sendiri" }, 400);
+  }
+  try {
+    await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+    return c.json({ success: true, message: "Pengguna berhasil dihapus" });
+  } catch (e) {
+    console.error("Delete User Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
   }
 });
 var worker_default = app;
@@ -2242,7 +2392,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-mIrB5r/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-vKQ8sK/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -2274,7 +2424,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-mIrB5r/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-vKQ8sK/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

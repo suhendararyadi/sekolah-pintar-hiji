@@ -1,12 +1,14 @@
 // ==============================================================================
-// FILE: cloudflare/worker.ts (Backend API dengan D1 & JWT) - DIPERBARUI
+// FILE: cloudflare/worker.ts (Versi Lengkap dan Final) - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Memperbaiki semua error TypeScript dan ESLint dengan membersihkan
-//         kode dan mendefinisikan tipe data yang benar untuk Hono.
+// TUJUAN: Memperbaiki semua peringatan ESLint dengan menggunakan tipe data yang
+//         aman ('unknown' pada catch block) dan membersihkan variabel yang
+//         tidak terpakai.
 
 import { Hono, type Context, type Next } from 'hono';
 import { sign, verify } from 'hono/jwt';
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
+import { cors } from 'hono/cors';
 
 // Definisikan tipe data untuk payload JWT kita
 interface AppJWTPayload {
@@ -41,16 +43,15 @@ type HonoVariables = {
 const app = new Hono<{ Bindings: Env, Variables: HonoVariables }>();
 
 // Middleware CORS
-app.use('*', async (c, next) => {
-  const origin = c.env.ALLOWED_ORIGIN || '*';
-  c.header('Access-Control-Allow-Origin', origin);
-  c.header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  c.header('Access-Control-Allow-Credentials', 'true');
-  await next();
+app.use('*', (c, next) => {
+  const corsMiddleware = cors({
+    origin: c.env.ALLOWED_ORIGIN || '*',
+    allowHeaders: ['Content-Type', 'Authorization'],
+    allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+  });
+  return corsMiddleware(c, next);
 });
-
-app.options('*', (c) => c.body(null, 204));
 
 // Middleware untuk otentikasi
 const authMiddleware = async (c: Context<{ Bindings: Env, Variables: HonoVariables }>, next: Next) => {
@@ -59,56 +60,127 @@ const authMiddleware = async (c: Context<{ Bindings: Env, Variables: HonoVariabl
     return c.json({ success: false, message: 'Unauthorized' }, 401);
   }
   try {
-    // PERBAIKAN 1: Lakukan konversi tipe melalui 'unknown' terlebih dahulu.
-    // Ini memberitahu TypeScript bahwa kita yakin dengan bentuk data yang kita harapkan.
     const decoded = await verify(token, c.env.JWT_SECRET) as unknown as AppJWTPayload;
     c.set('user', decoded);
     await next();
-  } catch (err) {
+  } catch (err: unknown) { // PERBAIKAN: Gunakan 'unknown' dan log errornya
     console.error("Auth middleware error:", err);
     return c.json({ success: false, message: 'Invalid token' }, 401);
   }
 };
 
-// Endpoint login
+// Endpoint untuk Login
 app.post('/api/login', async (c) => {
-  const { email, password } = await c.req.json<{ email?: string; password?: string }>();
-  if (!email || !password) return c.json({ success: false, message: 'Email dan password harus diisi.' }, 400);
-  
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<UserFromDB>();
-  if (!user) return c.json({ success: false, message: 'Email tidak ditemukan.' }, 401);
+  try {
+    const { email, password } = await c.req.json<{ email?: string; password?: string }>();
+    if (!email || !password) return c.json({ success: false, message: 'Email dan password harus diisi.' }, 400);
+    
+    const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<UserFromDB>();
+    if (!user) return c.json({ success: false, message: 'Email tidak ditemukan.' }, 401);
 
-  if (password !== user.password_hash) return c.json({ success: false, message: 'Password salah.' }, 401);
+    if (password !== user.password_hash) return c.json({ success: false, message: 'Password salah.' }, 401);
 
-  // PERBAIKAN 2: Hapus anotasi tipe ': AppJWTPayload' dari konstanta payload.
-  // Objek yang kita buat sudah sesuai, tetapi tipe kustom kita tidak memiliki
-  // 'index signature' yang diharapkan oleh fungsi 'sign'.
-  const payload = { sub: user.id, name: user.name, role: user.role, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
-  const token = await sign(payload, c.env.JWT_SECRET);
-  setCookie(c, 'authToken', token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 });
-  return c.json({ success: true, message: 'Login berhasil!' });
+    const payload = { sub: user.id, name: user.name, role: user.role, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 };
+    const token = await sign(payload, c.env.JWT_SECRET);
+    setCookie(c, 'authToken', token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 });
+    return c.json({ success: true, message: 'Login berhasil!' });
+  } catch (e: unknown) { // PERBAIKAN: Gunakan 'unknown'
+    console.error("Login Error: ", e);
+    return c.json({ success: false, message: 'Terjadi kesalahan server' }, 500);
+  }
 });
 
-// Endpoint logout
+// Endpoint untuk Logout
 app.post('/api/logout', async (c) => {
   deleteCookie(c, 'authToken', { path: '/' });
   return c.json({ success: true, message: 'Logout berhasil.' });
 });
 
-// Endpoint untuk mendapatkan semua pengguna (dilindungi middleware)
+// Endpoint untuk READ (mendapatkan semua pengguna)
 app.get('/api/users', authMiddleware, async (c) => {
   const user = c.get('user');
-
-  if (user.role !== 'admin') {
-    return c.json({ success: false, message: 'Forbidden' }, 403);
-  }
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
 
   try {
     const { results } = await c.env.DB.prepare("SELECT id, name, email, role, created_at FROM users").all<UserFromDB>();
     return c.json({ success: true, users: results });
-  } catch (err) {
-    console.error("Fetch users error:", err);
-    return c.json({ success: false, message: 'Failed to fetch users' }, 500);
+  } catch (e: unknown) { // PERBAIKAN: Gunakan 'unknown'
+    console.error("Fetch Users Error: ", e);
+    return c.json({ success: false, message: 'Gagal mengambil data pengguna' }, 500);
+  }
+});
+
+// Endpoint untuk CREATE (membuat pengguna baru)
+app.post('/api/users', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
+
+  try {
+    const { name, email, password, role } = await c.req.json();
+    if (!name || !email || !password || !role) {
+      return c.json({ success: false, message: 'Semua field harus diisi' }, 400);
+    }
+    const password_hash = password;
+
+    // PERBAIKAN: Tidak perlu destructure 'success' jika tidak digunakan
+    await c.env.DB.prepare(
+      'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)'
+    ).bind(name, email, password_hash, role).run();
+
+    return c.json({ success: true, message: 'Pengguna berhasil dibuat' }, 201);
+  } catch (e: unknown) { // PERBAIKAN: Gunakan 'unknown'
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes('UNIQUE constraint failed')) {
+      return c.json({ success: false, message: 'Email sudah terdaftar' }, 409);
+    }
+    console.error("Create User Error: ", e);
+    return c.json({ success: false, message: 'Terjadi kesalahan server' }, 500);
+  }
+});
+
+// Endpoint untuk UPDATE (memperbarui pengguna)
+app.put('/api/users/:id', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
+  
+  const userId = c.req.param('id');
+  try {
+    const { name, email, role } = await c.req.json();
+    if (!name || !email || !role) {
+      return c.json({ success: false, message: 'Nama, email, dan peran harus diisi' }, 400);
+    }
+
+    await c.env.DB.prepare(
+      'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?'
+    ).bind(name, email, role, userId).run();
+
+    return c.json({ success: true, message: 'Pengguna berhasil diperbarui' });
+  } catch (e: unknown) { // PERBAIKAN: Gunakan 'unknown'
+     const errorMessage = e instanceof Error ? e.message : String(e);
+     if (errorMessage.includes('UNIQUE constraint failed')) {
+      return c.json({ success: false, message: 'Email sudah digunakan oleh pengguna lain' }, 409);
+    }
+    console.error("Update User Error: ", e);
+    return c.json({ success: false, message: 'Terjadi kesalahan server' }, 500);
+  }
+});
+
+// Endpoint untuk DELETE (menghapus pengguna)
+app.delete('/api/users/:id', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
+
+  const userId = c.req.param('id');
+  if (user.sub === parseInt(userId)) {
+    return c.json({ success: false, message: 'Anda tidak bisa menghapus akun Anda sendiri' }, 400);
+  }
+
+  try {
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+    return c.json({ success: true, message: 'Pengguna berhasil dihapus' });
+  } catch (e: unknown) { // PERBAIKAN: Gunakan 'unknown'
+    console.error("Delete User Error: ", e);
+    return c.json({ success: false, message: 'Terjadi kesalahan server' }, 500);
   }
 });
 
