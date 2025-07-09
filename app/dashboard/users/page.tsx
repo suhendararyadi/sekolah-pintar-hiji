@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { PlusCircle, MoreHorizontal } from "lucide-react";
-// PERBAIKAN: Import tipe data Zod dari file user-form
 import { UserForm, type UserFormData } from "@/components/user-form";
+import Cookies from 'js-cookie';
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,65 +14,77 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 // Definisikan tipe data
-type User = { id: number; name: string; email: string; role: 'admin' | 'guru' | 'siswa'; created_at: string; };
-
-// Definisikan tipe untuk respons API
-type ApiResponse = {
-  success: boolean;
-  users?: User[];
-  message?: string;
-}
+type User = { id: number; name: string; email: string; role: 'admin' | 'guru' | 'siswa'; created_at: string; nisn?: string; class_name?: string; };
+type Class = { id: number; name: string; };
+type ApiResponse = { success: boolean; users?: User[]; classes?: Class[]; message?: string; }
 
 export default function UserManagementPage() {
   const [users, setUsers] = React.useState<User[]>([]);
+  const [classes, setClasses] = React.useState<Class[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<User | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
 
-  const fetchUsers = React.useCallback(async () => {
+  const getAuthToken = () => Cookies.get('authToken');
+
+  const fetchData = React.useCallback(async () => {
     setLoading(true);
+    const token = getAuthToken();
     try {
-      const response = await fetch('/api/users');
-      if (response.ok) {
-        const data: ApiResponse = await response.json();
+      const [usersRes, classesRes] = await Promise.all([
+        fetch('/api/users', { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch('/api/classes', { headers: { 'Authorization': `Bearer ${token}` } })
+      ]);
+      
+      if (usersRes.ok) {
+        const data: ApiResponse = await usersRes.json();
         setUsers(data.users || []);
-      } else {
-        setUsers([]);
+      }
+      if (classesRes.ok) {
+        const data: ApiResponse = await classesRes.json();
+        setClasses(data.classes || []);
       }
     } catch (error) {
-      console.error("Failed to fetch users:", error);
-      setUsers([]);
+      console.error("Failed to fetch data:", error);
     } finally {
       setLoading(false);
     }
   }, []);
 
   React.useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    fetchData();
+  }, [fetchData]);
 
   const handleSave = async (data: UserFormData) => {
     setIsSaving(true);
+    const token = getAuthToken();
+    
+    const isStudent = data.role === 'siswa';
+    const endpoint = isStudent ? '/api/students' : '/api/users';
     const method = editingUser ? 'PUT' : 'POST';
-    const url = editingUser ? `/api/users/${editingUser.id}` : '/api/users';
+    const url = editingUser ? `/api/users/${editingUser.id}` : endpoint;
 
     try {
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+      const response = await fetch(url, { 
+        method, 
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }, 
+        body: JSON.stringify(data) 
       });
 
       if (response.ok) {
         setIsDialogOpen(false);
         setEditingUser(null);
-        await fetchUsers(); // Refresh data
+        await fetchData(); // Refresh data
       } else {
         const errorData: ApiResponse = await response.json();
         alert(`Error: ${errorData.message || 'Gagal menyimpan data'}`);
       }
-    } catch { // PERBAIKAN: Hapus parameter _error yang tidak terpakai
+    } catch (error) {
+        console.error("Save operation failed:", error);
         alert("Terjadi kesalahan koneksi.");
     } finally {
         setIsSaving(false);
@@ -80,15 +92,22 @@ export default function UserManagementPage() {
   };
 
   const handleDelete = async (userId: number) => {
+    const token = getAuthToken();
     try {
-        const response = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+        const response = await fetch(`/api/users/${userId}`, { 
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
         if (response.ok) {
-            await fetchUsers(); // Refresh data
+            await fetchData(); // Refresh data
         } else {
             const errorData: ApiResponse = await response.json();
             alert(`Error: ${errorData.message || 'Gagal menghapus data'}`);
         }
-    } catch { // PERBAIKAN: Hapus parameter _error yang tidak terpakai
+    } catch (error) {
+        console.error("Delete operation failed:", error);
         alert("Terjadi kesalahan koneksi.");
     }
   };
@@ -116,7 +135,7 @@ export default function UserManagementPage() {
                 <DialogHeader>
                   <DialogTitle>{editingUser ? 'Edit Pengguna' : 'Tambah Pengguna Baru'}</DialogTitle>
                 </DialogHeader>
-                <UserForm user={editingUser} onSave={handleSave} isSaving={isSaving} />
+                <UserForm user={editingUser} classes={classes} onSave={handleSave} isSaving={isSaving} />
               </DialogContent>
             </Dialog>
           </div>
@@ -126,20 +145,24 @@ export default function UserManagementPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nama</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>Peran</TableHead>
+                <TableHead className="hidden md:table-cell">NISN</TableHead>
+                <TableHead className="hidden md:table-cell">Kelas</TableHead>
                 <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={4} className="text-center">Memuat data...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center">Memuat data...</TableCell></TableRow>
               ) : (
                 users.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">{user.name}</TableCell>
-                    <TableCell>{user.email}</TableCell>
+                    <TableCell className="hidden md:table-cell">{user.email}</TableCell>
                     <TableCell><Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>{user.role}</Badge></TableCell>
+                    <TableCell className="hidden md:table-cell">{user.nisn || '-'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{user.class_name || '-'}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>

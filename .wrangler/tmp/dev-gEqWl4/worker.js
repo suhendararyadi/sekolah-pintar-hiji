@@ -2283,7 +2283,12 @@ app.get("/api/users", authMiddleware, async (c) => {
   const user = c.get("user");
   if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
   try {
-    const { results } = await c.env.DB.prepare("SELECT id, name, email, role, created_at FROM users").all();
+    const { results } = await c.env.DB.prepare(`
+      SELECT u.id, u.name, u.email, u.role, u.created_at, sp.nisn, c.name as class_name
+      FROM users u
+      LEFT JOIN student_profiles sp ON u.id = sp.user_id
+      LEFT JOIN classes c ON sp.class_id = c.id
+    `).all();
     return c.json({ success: true, users: results });
   } catch (e) {
     console.error("Fetch Users Error: ", e);
@@ -2295,8 +2300,8 @@ app.post("/api/users", authMiddleware, async (c) => {
   if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
   try {
     const { name, email, password, role } = await c.req.json();
-    if (!name || !email || !password || !role) {
-      return c.json({ success: false, message: "Semua field harus diisi" }, 400);
+    if (!name || !email || !password || !role || role === "siswa") {
+      return c.json({ success: false, message: "Data tidak lengkap atau peran tidak valid untuk endpoint ini" }, 400);
     }
     const password_hash = password;
     await c.env.DB.prepare(
@@ -2309,6 +2314,33 @@ app.post("/api/users", authMiddleware, async (c) => {
       return c.json({ success: false, message: "Email sudah terdaftar" }, 409);
     }
     console.error("Create User Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
+  }
+});
+app.post("/api/students", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  try {
+    const { name, email, password, nisn, address, phone_number, parent_name, class_id } = await c.req.json();
+    if (!name || !email || !password) {
+      return c.json({ success: false, message: "Nama, email, dan password wajib diisi." }, 400);
+    }
+    const password_hash = password;
+    const createUserStmt = c.env.DB.prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'siswa') RETURNING id");
+    const createProfileStmt = c.env.DB.prepare("INSERT INTO student_profiles (user_id, nisn, address, phone_number, parent_name, class_id) VALUES (?, ?, ?, ?, ?, ?)");
+    const [userResult] = await c.env.DB.batch([createUserStmt.bind(name, email, password_hash)]);
+    const newUserId = userResult.results?.[0]?.id;
+    if (!newUserId) {
+      throw new Error("Gagal membuat akun pengguna.");
+    }
+    await createProfileStmt.bind(newUserId, nisn, address, phone_number, parent_name, class_id).run();
+    return c.json({ success: true, message: "Siswa berhasil ditambahkan" }, 201);
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      return c.json({ success: false, message: "Email atau NISN sudah terdaftar" }, 409);
+    }
+    console.error("Create Student Error: ", e);
     return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
   }
 });
@@ -2347,6 +2379,15 @@ app.delete("/api/users/:id", authMiddleware, async (c) => {
   } catch (e) {
     console.error("Delete User Error: ", e);
     return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
+  }
+});
+app.get("/api/classes", authMiddleware, async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare("SELECT id, name FROM classes ORDER BY name ASC").all();
+    return c.json({ success: true, classes: results });
+  } catch (e) {
+    console.error("Fetch Classes Error: ", e);
+    return c.json({ success: false, message: "Gagal mengambil data kelas" }, 500);
   }
 });
 var worker_default = app;
