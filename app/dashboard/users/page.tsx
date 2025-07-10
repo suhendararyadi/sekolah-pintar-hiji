@@ -1,8 +1,7 @@
 "use client"
 
 import * as React from "react";
-import { PlusCircle, MoreHorizontal } from "lucide-react";
-import { UserForm, type UserFormData } from "@/components/user-form";
+import { PlusCircle, MoreHorizontal, Upload } from "lucide-react";
 import Cookies from 'js-cookie';
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { UserForm, type UserFormData } from "@/components/user-form";
+import { UserImportDialog } from "@/components/user-import-dialog";
 
 // Definisikan tipe data
 type User = { id: number; name: string; email: string; role: 'admin' | 'guru' | 'siswa'; created_at: string; nisn?: string; class_name?: string; };
@@ -23,6 +24,7 @@ export default function UserManagementPage() {
   const [classes, setClasses] = React.useState<Class[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [isImportOpen, setIsImportOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<User | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -119,25 +121,45 @@ export default function UserManagementPage() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Manajemen Pengguna</CardTitle>
-              <CardDescription>Tambah, edit, atau hapus data pengguna.</CardDescription>
+              <CardDescription>Tambah, edit, hapus, atau import data pengguna.</CardDescription>
             </div>
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) setEditingUser(null);
-            }}>
-              <DialogTrigger asChild>
-                <Button size="sm" className="gap-1">
-                  <PlusCircle className="h-3.5 w-3.5" />
-                  Tambah Pengguna
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{editingUser ? 'Edit Pengguna' : 'Tambah Pengguna Baru'}</DialogTitle>
-                </DialogHeader>
-                <UserForm user={editingUser} classes={classes} onSave={handleSave} isSaving={isSaving} />
-              </DialogContent>
-            </Dialog>
+            <div className="flex items-center gap-2">
+              <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="outline" className="gap-1">
+                    <Upload className="h-3.5 w-3.5" />
+                    Import
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Import Pengguna dari CSV</DialogTitle>
+                  </DialogHeader>
+                  <UserImportDialog 
+                    onImportSuccess={fetchData} 
+                    onClose={() => setIsImportOpen(false)} 
+                  />
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={isDialogOpen} onOpenChange={(open) => {
+                setIsDialogOpen(open);
+                if (!open) setEditingUser(null);
+              }}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="gap-1">
+                    <PlusCircle className="h-3.5 w-3.5" />
+                    Tambah Pengguna
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{editingUser ? 'Edit Pengguna' : 'Tambah Pengguna Baru'}</DialogTitle>
+                  </DialogHeader>
+                  <UserForm user={editingUser} classes={classes} onSave={handleSave} isSaving={isSaving} />
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

@@ -1,8 +1,9 @@
 // ==============================================================================
 // FILE: cloudflare/worker.ts (Versi Lengkap dan Final) - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Menyediakan kode backend API yang utuh, mencakup otentikasi,
-//         CORS, dan semua endpoint CRUD untuk manajemen pengguna.
+// TUJUAN: Memperbaiki semua peringatan ESLint dengan menggunakan tipe data yang
+//         aman ('unknown' pada catch block) dan membersihkan variabel yang
+//         tidak terpakai.
 
 import { Hono, type Context, type Next } from 'hono';
 import { sign, verify } from 'hono/jwt';
@@ -26,6 +27,15 @@ type UserFromDB = {
   role: 'admin' | 'guru' | 'siswa';
   created_at: string;
 };
+
+// PERBAIKAN: Definisikan tipe data untuk data import siswa
+type StudentImportData = {
+  name: string;
+  email: string;
+  password?: string;
+  nisn?: string;
+};
+
 
 // Definisikan tipe data untuk Environment Bindings
 export interface Env {
@@ -63,7 +73,6 @@ const authMiddleware = async (c: Context<{ Bindings: Env, Variables: HonoVariabl
     c.set('user', decoded);
     await next();
   } catch (err) {
-    // PERBAIKAN: Gunakan variabel 'err' untuk logging
     console.error("Auth middleware error:", err);
     return c.json({ success: false, message: 'Invalid token' }, 401);
   }
@@ -160,7 +169,6 @@ app.post('/api/students', authMiddleware, async (c) => {
 
         const [userResult] = await c.env.DB.batch([createUserStmt.bind(name, email, password_hash)]);
         
-        // PERBAIKAN: Beri tahu TypeScript bentuk data yang dikembalikan oleh RETURNING
         type InsertResult = { id: number };
         const newUserId = (userResult.results as InsertResult[])?.[0]?.id;
         
@@ -227,9 +235,36 @@ app.delete('/api/users/:id', authMiddleware, async (c) => {
   }
 });
 
-// ===================================================================
-// PERUBAHAN BARU: Endpoint untuk mengambil daftar kelas
-// ===================================================================
+// Endpoint untuk import pengguna secara massal (bulk)
+app.post('/api/students/bulk', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
+
+  try {
+    // PERBAIKAN: Gunakan tipe data StudentImportData yang sudah kita definisikan
+    const { students } = await c.req.json<{ students: StudentImportData[] }>();
+    if (!students || !Array.isArray(students) || students.length === 0) {
+      return c.json({ success: false, message: 'Data siswa tidak valid atau kosong.' }, 400);
+    }
+
+    const userStmts = students.map(student => {
+      const password_hash = student.password || Math.random().toString(36).slice(-8);
+      return c.env.DB.prepare(
+        'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, \'siswa\')'
+      ).bind(student.name, student.email, password_hash);
+    });
+
+    await c.env.DB.batch(userStmts);
+    
+    return c.json({ success: true, message: `${students.length} pengguna berhasil dibuat. Profil akan dibuat di proses berikutnya.` });
+
+  } catch (e: unknown) {
+    console.error("Bulk Import Error: ", e);
+    return c.json({ success: false, message: 'Terjadi kesalahan server saat import massal.' }, 500);
+  }
+});
+
+// Endpoint untuk mengambil daftar kelas
 app.get('/api/classes', authMiddleware, async (c) => {
   try {
     const { results } = await c.env.DB.prepare("SELECT id, name FROM classes ORDER BY name ASC").all();
@@ -239,5 +274,6 @@ app.get('/api/classes', authMiddleware, async (c) => {
     return c.json({ success: false, message: 'Gagal mengambil data kelas' }, 500);
   }
 });
+
 
 export default app;

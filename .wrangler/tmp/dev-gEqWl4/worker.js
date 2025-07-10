@@ -2381,6 +2381,27 @@ app.delete("/api/users/:id", authMiddleware, async (c) => {
     return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
   }
 });
+app.post("/api/students/bulk", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  try {
+    const { students } = await c.req.json();
+    if (!students || !Array.isArray(students) || students.length === 0) {
+      return c.json({ success: false, message: "Data siswa tidak valid atau kosong." }, 400);
+    }
+    const userStmts = students.map((student) => {
+      const password_hash = student.password || Math.random().toString(36).slice(-8);
+      return c.env.DB.prepare(
+        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'siswa')"
+      ).bind(student.name, student.email, password_hash);
+    });
+    await c.env.DB.batch(userStmts);
+    return c.json({ success: true, message: `${students.length} pengguna berhasil dibuat. Profil akan dibuat di proses berikutnya.` });
+  } catch (e) {
+    console.error("Bulk Import Error: ", e);
+    return c.json({ success: false, message: "Terjadi kesalahan server saat import massal." }, 500);
+  }
+});
 app.get("/api/classes", authMiddleware, async (c) => {
   try {
     const { results } = await c.env.DB.prepare("SELECT id, name FROM classes ORDER BY name ASC").all();
