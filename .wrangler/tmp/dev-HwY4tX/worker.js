@@ -2345,22 +2345,33 @@ app.post("/api/students", authMiddleware, async (c) => {
   }
 });
 app.put("/api/users/:id", authMiddleware, async (c) => {
-  const user = c.get("user");
-  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  const userContext = c.get("user");
+  if (userContext.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
   const userId = c.req.param("id");
   try {
-    const { name, email, role } = await c.req.json();
+    const { name, email, role, nisn, address, phone_number, parent_name, class_id } = await c.req.json();
     if (!name || !email || !role) {
       return c.json({ success: false, message: "Nama, email, dan peran harus diisi" }, 400);
     }
-    await c.env.DB.prepare(
+    const batch = [];
+    batch.push(c.env.DB.prepare(
       "UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?"
-    ).bind(name, email, role, userId).run();
+    ).bind(name, email, role, userId));
+    if (role === "siswa") {
+      batch.push(c.env.DB.prepare(
+        `INSERT INTO student_profiles (user_id, nisn, address, phone_number, parent_name, class_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           nisn=excluded.nisn, address=excluded.address, phone_number=excluded.phone_number,
+           parent_name=excluded.parent_name, class_id=excluded.class_id`
+      ).bind(userId, nisn, address, phone_number, parent_name, class_id));
+    }
+    await c.env.DB.batch(batch);
     return c.json({ success: true, message: "Pengguna berhasil diperbarui" });
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
     if (errorMessage.includes("UNIQUE constraint failed")) {
-      return c.json({ success: false, message: "Email sudah digunakan oleh pengguna lain" }, 409);
+      return c.json({ success: false, message: "Email atau NISN sudah digunakan oleh pengguna lain" }, 409);
     }
     console.error("Update User Error: ", e);
     return c.json({ success: false, message: "Terjadi kesalahan server" }, 500);
@@ -2389,15 +2400,24 @@ app.post("/api/students/bulk", authMiddleware, async (c) => {
     if (!students || !Array.isArray(students) || students.length === 0) {
       return c.json({ success: false, message: "Data siswa tidak valid atau kosong." }, 400);
     }
-    const userStmts = students.map((student) => {
+    for (const student of students) {
       const password_hash = student.password || Math.random().toString(36).slice(-8);
-      return c.env.DB.prepare(
-        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'siswa')"
-      ).bind(student.name, student.email, password_hash);
-    });
-    await c.env.DB.batch(userStmts);
-    return c.json({ success: true, message: `${students.length} pengguna berhasil dibuat. Profil akan dibuat di proses berikutnya.` });
+      const userResult = await c.env.DB.prepare(
+        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'siswa') RETURNING id"
+      ).bind(student.name, student.email, password_hash).first();
+      const newUserId = userResult?.id;
+      if (newUserId) {
+        await c.env.DB.prepare(
+          "INSERT INTO student_profiles (user_id, nisn) VALUES (?, ?)"
+        ).bind(newUserId, student.nisn).run();
+      }
+    }
+    return c.json({ success: true, message: `${students.length} siswa berhasil diimpor.` });
   } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      return c.json({ success: false, message: "Satu atau lebih email/NISN sudah ada di database." }, 409);
+    }
     console.error("Bulk Import Error: ", e);
     return c.json({ success: false, message: "Terjadi kesalahan server saat import massal." }, 500);
   }
@@ -2409,6 +2429,157 @@ app.get("/api/classes", authMiddleware, async (c) => {
   } catch (e) {
     console.error("Fetch Classes Error: ", e);
     return c.json({ success: false, message: "Gagal mengambil data kelas" }, 500);
+  }
+});
+app.get("/api/me", authMiddleware, async (c) => {
+  const user = c.get("user");
+  return c.json({ success: true, user });
+});
+app.get("/api/schedules", authMiddleware, async (c) => {
+  const user = c.get("user");
+  try {
+    let query;
+    if (user.role === "admin") {
+      query = c.env.DB.prepare(`
+        SELECT s.id, s.day_of_week, s.start_time, s.end_time,
+               c.name as class_name, sub.name as subject_name, t.name as teacher_name
+        FROM schedules s
+        JOIN classes c ON s.class_id = c.id
+        JOIN subjects sub ON s.subject_id = sub.id
+        JOIN users t ON s.teacher_id = t.id
+        ORDER BY s.day_of_week, s.start_time
+      `);
+    } else if (user.role === "guru") {
+      query = c.env.DB.prepare(`
+        SELECT s.id, s.day_of_week, s.start_time, s.end_time,
+               c.name as class_name, sub.name as subject_name, t.name as teacher_name
+        FROM schedules s
+        JOIN classes c ON s.class_id = c.id
+        JOIN subjects sub ON s.subject_id = sub.id
+        JOIN users t ON s.teacher_id = t.id
+        WHERE s.teacher_id = ?
+        ORDER BY s.day_of_week, s.start_time
+      `).bind(user.sub);
+    } else {
+      return c.json({ success: true, schedules: [] });
+    }
+    const { results } = await query.all();
+    return c.json({ success: true, schedules: results });
+  } catch (e) {
+    console.error("Fetch Schedules Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil data jadwal" }, 500);
+  }
+});
+app.get("/api/teachers", authMiddleware, async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare("SELECT id, name FROM users WHERE role = 'guru' ORDER BY name ASC").all();
+    return c.json({ success: true, teachers: results });
+  } catch (e) {
+    console.error("Fetch Teachers Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil data guru" }, 500);
+  }
+});
+app.get("/api/subjects", authMiddleware, async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare("SELECT id, name FROM subjects ORDER BY name ASC").all();
+    return c.json({ success: true, subjects: results });
+  } catch (e) {
+    console.error("Fetch Subjects Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil data mata pelajaran" }, 500);
+  }
+});
+app.post("/api/schedules", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  try {
+    const { class_id, subject_id, teacher_id, day_of_week, start_time, end_time } = await c.req.json();
+    await c.env.DB.prepare(
+      "INSERT INTO schedules (class_id, subject_id, teacher_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(class_id, subject_id, teacher_id, day_of_week, start_time, end_time).run();
+    return c.json({ success: true, message: "Jadwal berhasil dibuat" }, 201);
+  } catch (e) {
+    console.error("Create Schedule Error:", e);
+    return c.json({ success: false, message: "Gagal membuat jadwal" }, 500);
+  }
+});
+app.delete("/api/schedules/:id", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  const scheduleId = c.req.param("id");
+  try {
+    await c.env.DB.prepare("DELETE FROM schedules WHERE id = ?").bind(scheduleId).run();
+    return c.json({ success: true, message: "Jadwal berhasil dihapus" });
+  } catch (e) {
+    console.error("Delete Schedule Error:", e);
+    return c.json({ success: false, message: "Gagal menghapus jadwal" }, 500);
+  }
+});
+app.get("/api/attendance/schedules", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "guru" && user.role !== "admin") {
+    return c.json({ success: true, schedules: [] });
+  }
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT
+        s.id, c.name as class_name, sub.name as subject_name, s.start_time, s.end_time
+      FROM schedules s
+      JOIN classes c ON s.class_id = c.id
+      JOIN subjects sub ON s.subject_id = sub.id
+      WHERE s.teacher_id = ?
+      ORDER BY s.day_of_week, s.start_time ASC
+    `).bind(user.sub).all();
+    return c.json({ success: true, schedules: results });
+  } catch (e) {
+    console.error("Fetch Schedules Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil jadwal" }, 500);
+  }
+});
+app.get("/api/attendance/schedules/:scheduleId/students", authMiddleware, async (c) => {
+  const scheduleId = c.req.param("scheduleId");
+  const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  try {
+    const schedule = await c.env.DB.prepare("SELECT class_id FROM schedules WHERE id = ?").bind(scheduleId).first();
+    if (!schedule) {
+      return c.json({ success: false, message: "Jadwal tidak ditemukan" }, 404);
+    }
+    const { results } = await c.env.DB.prepare(`
+      SELECT u.id, u.name, ar.status
+      FROM users u
+      JOIN student_profiles sp ON u.id = sp.user_id
+      LEFT JOIN attendance_records ar ON u.id = ar.student_id
+                                     AND ar.schedule_id = ?
+                                     AND ar.attendance_date = ?
+      WHERE sp.class_id = ?
+      ORDER BY u.name ASC
+    `).bind(scheduleId, todayDate, schedule.class_id).all();
+    return c.json({ success: true, students: results });
+  } catch (e) {
+    console.error("Fetch Students Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil data siswa" }, 500);
+  }
+});
+app.post("/api/attendance/records", authMiddleware, async (c) => {
+  const user = c.get("user");
+  const { schedule_id, records } = await c.req.json();
+  if (!schedule_id || !records || records.length === 0) {
+    return c.json({ success: false, message: "Data tidak lengkap" }, 400);
+  }
+  const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  try {
+    const stmts = records.map((record) => {
+      return c.env.DB.prepare(`
+        INSERT INTO attendance_records (student_id, schedule_id, attendance_date, status, recorded_by_teacher_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(student_id, schedule_id, attendance_date) DO UPDATE SET
+          status=excluded.status
+      `).bind(record.student_id, schedule_id, todayDate, record.status, user.sub);
+    });
+    await c.env.DB.batch(stmts);
+    return c.json({ success: true, message: "Absensi berhasil disimpan" });
+  } catch (e) {
+    console.error("Save Attendance Error:", e);
+    return c.json({ success: false, message: "Gagal menyimpan absensi" }, 500);
   }
 });
 var worker_default = app;
@@ -2454,7 +2625,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-PfTv5c/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-177dtp/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -2486,7 +2657,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-PfTv5c/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-177dtp/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

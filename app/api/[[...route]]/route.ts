@@ -1,13 +1,13 @@
 // ==============================================================================
-// FILE: app/api/[[...route]]/route.ts (API Proxy) - DIPERBAIKI
+// FILE: app/api/[[...route]]/route.ts (API Proxy) - DIPERBARUI
 // ==============================================================================
-// TUJUAN: Meneruskan semua request dari /api/* di Next.js ke Cloudflare Worker
-//         dan memastikan route ini kompatibel dengan Edge Runtime Cloudflare.
+// TUJUAN: Meneruskan semua request (GET, POST, PUT, DELETE) dari Next.js
+//         ke Cloudflare Worker.
 
 export const runtime = 'edge';
 
-// Fungsi untuk menangani request GET
-export async function GET(request: Request) {
+// Fungsi bantuan untuk meneruskan request, agar tidak mengulang kode
+async function forwardRequest(request: Request) {
   const incomingUrl = new URL(request.url);
   
   const workerBaseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.CLOUDFLARE_WORKER_URL;
@@ -16,35 +16,42 @@ export async function GET(request: Request) {
     return new Response('Worker URL not configured', { status: 500 });
   }
 
-  // PERBAIKAN: Menggunakan constructor URL untuk menggabungkan URL secara aman.
-  // Ini mencegah masalah seperti double slash (//) atau path yang salah.
   const finalWorkerUrl = new URL(incomingUrl.pathname, workerBaseUrl);
   finalWorkerUrl.search = incomingUrl.search;
 
+  // Buat header baru dari request yang masuk
+  const headers = new Headers(request.headers);
+  // Atur header 'host' agar sesuai dengan tujuan worker
+  headers.set('host', new URL(workerBaseUrl).host);
+
   return fetch(finalWorkerUrl.href, {
-    headers: request.headers,
+    method: request.method,
+    headers: headers,
+    body: request.body,
     redirect: 'manual',
   });
 }
 
-// Fungsi untuk menangani request POST
+// Handler untuk berbagai metode HTTP
+export async function GET(request: Request) {
+  return forwardRequest(request);
+}
+
 export async function POST(request: Request) {
-  const incomingUrl = new URL(request.url);
+  return forwardRequest(request);
+}
 
-  const workerBaseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.CLOUDFLARE_WORKER_URL;
+// PERBAIKAN: Tambahkan handler untuk metode PUT
+export async function PUT(request: Request) {
+  return forwardRequest(request);
+}
 
-  if (!workerBaseUrl) {
-    return new Response('Worker URL not configured', { status: 500 });
-  }
+// PERBAIKAN: Tambahkan handler untuk metode DELETE
+export async function DELETE(request: Request) {
+  return forwardRequest(request);
+}
 
-  // PERBAIKAN: Menerapkan logika yang sama untuk request POST.
-  const finalWorkerUrl = new URL(incomingUrl.pathname, workerBaseUrl);
-  finalWorkerUrl.search = incomingUrl.search;
-
-  return fetch(finalWorkerUrl.href, {
-    method: 'POST',
-    headers: request.headers,
-    body: request.body,
-    redirect: 'manual',
-  });
+// Menambahkan handler lain untuk masa depan
+export async function PATCH(request: Request) {
+  return forwardRequest(request);
 }
