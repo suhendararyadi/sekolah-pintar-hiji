@@ -1,4 +1,6 @@
 -- Hapus tabel dalam urutan yang benar untuk menghindari error foreign key
+DROP TABLE IF EXISTS student_grades;
+DROP TABLE IF EXISTS grade_components;
 DROP TABLE IF EXISTS attendance_records;
 DROP TABLE IF EXISTS schedules;
 DROP TABLE IF EXISTS subjects;
@@ -19,8 +21,8 @@ CREATE TABLE users (
 -- Tabel untuk daftar kelas
 CREATE TABLE classes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE, -- Contoh: "Kelas 10-A", "Kelas 11-B"
-    major TEXT, -- Jurusan, contoh: "IPA", "IPS", bisa NULL
+    name TEXT NOT NULL UNIQUE,
+    major TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -38,10 +40,6 @@ CREATE TABLE student_profiles (
   FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL
 );
 
--- ===================================================================
--- TABEL BARU UNTUK FITUR ABSENSI
--- ===================================================================
-
 -- Tabel untuk daftar mata pelajaran
 CREATE TABLE subjects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,56 +54,43 @@ CREATE TABLE schedules (
     class_id INTEGER NOT NULL,
     subject_id INTEGER NOT NULL,
     teacher_id INTEGER NOT NULL,
-    day_of_week INTEGER NOT NULL, -- 1 untuk Senin, 2 untuk Selasa, dst.
-    start_time TEXT NOT NULL, -- Format HH:MM
-    end_time TEXT NOT NULL, -- Format HH:MM
+    day_of_week INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Tabel untuk catatan kehadiran
+-- ===================================================================
+-- PERUBAHAN DI SINI: Tabel Absensi Disederhanakan
+-- ===================================================================
 CREATE TABLE attendance_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id INTEGER NOT NULL,
-    schedule_id INTEGER NOT NULL,
+    class_id INTEGER NOT NULL,
     attendance_date TEXT NOT NULL, -- Format YYYY-MM-DD
     status TEXT NOT NULL CHECK(status IN ('Hadir', 'Sakit', 'Izin', 'Alfa')),
     notes TEXT,
-    recorded_by_teacher_id INTEGER NOT NULL,
+    recorded_by_admin_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(student_id, schedule_id, attendance_date), -- Mencegah data ganda
+    UNIQUE(student_id, attendance_date), -- Setiap siswa hanya punya 1 record per hari
     FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
-    FOREIGN KEY (recorded_by_teacher_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (recorded_by_admin_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 
 -- ===================================================================
 -- DATA CONTOH (SEEDING)
 -- ===================================================================
-
--- Masukkan data pengguna contoh
+-- (Data contoh lainnya tetap sama)
 INSERT INTO users (name, email, password_hash, role) VALUES 
 ('Admin Utama', 'admin@sekolah.id', 'admin123', 'admin'),
 ('Budi Santoso', 'guru.budi@sekolah.id', 'guru123', 'guru'),
-('Siti Aminah', 'guru.siti@sekolah.id', 'guru123', 'guru'),
-('Siswa Cerdas', 'siswa.cerdas@sekolah.id', 'siswa123', 'siswa'),
-('Ani Pintar', 'siswa.ani@sekolah.id', 'siswa123', 'siswa');
-
--- Masukkan data kelas contoh
-INSERT INTO classes (id, name, major) VALUES (101, 'Kelas 10-A', 'IPA'), (102, 'Kelas 10-B', 'IPS');
-
--- Masukkan data profil siswa contoh
-INSERT INTO student_profiles (user_id, class_id, nisn) VALUES (4, 101, '12345'), (5, 101, '67890');
-
--- Masukkan data mata pelajaran contoh
-INSERT INTO subjects (id, name, code) VALUES (201, 'Matematika Wajib', 'MTK-01'), (202, 'Bahasa Indonesia', 'IND-01');
-
--- Masukkan data jadwal contoh
--- Guru Budi (ID 2) mengajar Matematika (ID 201) di Kelas 10-A (ID 101) pada hari Senin jam 07:30
-INSERT INTO schedules (class_id, subject_id, teacher_id, day_of_week, start_time, end_time) VALUES (101, 201, 2, 1, '07:30', '09:00');
--- Guru Siti (ID 3) mengajar Bahasa Indonesia (ID 202) di Kelas 10-A (ID 101) pada hari Senin jam 09:00
-INSERT INTO schedules (class_id, subject_id, teacher_id, day_of_week, start_time, end_time) VALUES (101, 202, 3, 1, '09:00', '10:30');
-
+('Siswa Cerdas', 'siswa.cerdas@sekolah.id', 'siswa123', 'siswa');
+INSERT INTO classes (id, name, major) VALUES (101, 'Kelas 10-A', 'IPA');
+INSERT INTO student_profiles (user_id, class_id, nisn) VALUES (3, 101, '12345');
+INSERT INTO subjects (id, name, code) VALUES (201, 'Matematika Wajib', 'MTK-01');
+INSERT INTO schedules (id, class_id, subject_id, teacher_id, day_of_week, start_time, end_time) VALUES (1, 101, 201, 2, 1, '07:30', '09:00');

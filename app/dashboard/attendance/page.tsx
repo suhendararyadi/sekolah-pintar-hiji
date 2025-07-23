@@ -1,98 +1,49 @@
 "use client";
 
 import * as React from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import Cookies from 'js-cookie';
 
-// Definisikan tipe data yang akan kita gunakan
-type Schedule = {
-  id: number;
-  class_name: string;
-  subject_name: string;
-  start_time: string;
-  end_time: string;
-};
-
-// PERBAIKAN: Tipe Student sekarang bisa memiliki status
-type Student = {
-  id: number;
-  name: string;
-  status?: AttendanceStatus | null; // Status bisa jadi null jika belum ada record
-};
-
+// Definisikan tipe data
+type Class = { id: number; name: string; };
+type Student = { id: number; name: string; status?: AttendanceStatus | null; };
 type AttendanceStatus = 'Hadir' | 'Sakit' | 'Izin' | 'Alfa';
+type ApiResponse = { success: boolean; classes?: Class[]; students?: Student[]; message?: string; }
 
-type ApiResponse = {
-    success: boolean;
-    schedules?: Schedule[];
-    students?: Student[];
-    message?: string;
-}
-
-export default function AttendancePage() {
-  const [schedules, setSchedules] = React.useState<Schedule[]>([]);
-  const [selectedSchedule, setSelectedSchedule] = React.useState<Schedule | null>(null);
+export default function DailyAttendancePage() {
+  const [classes, setClasses] = React.useState<Class[]>([]);
   const [students, setStudents] = React.useState<Student[]>([]);
+  const [selectedClass, setSelectedClass] = React.useState<string>("");
+  const [selectedDate, setSelectedDate] = React.useState<string>(new Date().toISOString().split('T')[0]);
   const [attendance, setAttendance] = React.useState<Map<number, AttendanceStatus>>(new Map());
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
 
   const getAuthToken = () => Cookies.get('authToken');
 
-  // Ambil jadwal mengajar guru untuk hari ini
+  // Fetch daftar kelas saat komponen dimuat
   React.useEffect(() => {
-    const fetchSchedules = async () => {
-      setLoading(true);
+    const fetchClasses = async () => {
       const token = getAuthToken();
-      try {
-        const response = await fetch('/api/attendance/schedules', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data: ApiResponse = await response.json();
-          setSchedules(data.schedules || []);
-        }
-      } catch (error) {
-        console.error("Gagal mengambil jadwal:", error);
-      } finally {
-        setLoading(false);
+      const response = await fetch('/api/classes', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (response.ok) {
+        const data: ApiResponse = await response.json();
+        setClasses(data.classes || []);
       }
     };
-    fetchSchedules();
+    fetchClasses();
   }, []);
 
-  // Ambil daftar siswa ketika jadwal dipilih
-  const handleScheduleSelect = async (scheduleId: string) => {
-    const schedule = schedules.find(s => s.id.toString() === scheduleId);
-    if (!schedule) return;
-
-    setSelectedSchedule(schedule);
+  const fetchStudentsForAttendance = async () => {
+    if (!selectedClass || !selectedDate) return;
     setLoading(true);
     const token = getAuthToken();
     try {
-      const response = await fetch(`/api/attendance/schedules/${scheduleId}/students`, {
+      const response = await fetch(`/api/attendance/class/${selectedClass}?date=${selectedDate}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -100,10 +51,8 @@ export default function AttendancePage() {
         const studentList = data.students || [];
         setStudents(studentList);
         
-        // PERBAIKAN UTAMA: Set status awal berdasarkan data dari backend
         const initialAttendance = new Map<number, AttendanceStatus>();
         studentList.forEach((student: Student) => {
-          // Jika sudah ada status dari DB, gunakan itu. Jika tidak, default ke "Hadir".
           initialAttendance.set(student.id, student.status || 'Hadir');
         });
         setAttendance(initialAttendance);
@@ -120,76 +69,54 @@ export default function AttendancePage() {
   };
 
   const handleSaveAttendance = async () => {
-    if (!selectedSchedule) return;
+    if (!selectedClass || !selectedDate) return;
     setIsSaving(true);
     const token = getAuthToken();
-    const records = Array.from(attendance.entries()).map(([student_id, status]) => ({
-      student_id,
-      status,
-    }));
+    const records = Array.from(attendance.entries()).map(([student_id, status]) => ({ student_id, status }));
 
     try {
       const response = await fetch('/api/attendance/records', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          schedule_id: selectedSchedule.id,
-          records: records,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ class_id: parseInt(selectedClass), date: selectedDate, records }),
       });
-
       if (response.ok) {
         alert("Absensi berhasil disimpan!");
-        // Reset state setelah berhasil menyimpan
-        setSelectedSchedule(null);
-        setStudents([]);
-        setAttendance(new Map());
       } else {
+        // PERBAIKAN: Beri tahu TypeScript bentuk data error yang diharapkan
         const errorData: ApiResponse = await response.json();
         alert(`Gagal menyimpan: ${errorData.message}`);
       }
     } catch (error) {
-      console.error("Gagal menyimpan absensi:", error);
+      // PERBAIKAN: Gunakan variabel error untuk logging
+      console.error("Save attendance failed:", error);
       alert("Terjadi kesalahan koneksi.");
     } finally {
       setIsSaving(false);
     }
   };
 
-
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
       <Card>
         <CardHeader>
-          <CardTitle>Daftar Kehadiran Siswa</CardTitle>
-          <CardDescription>
-            Pilih jadwal mengajar Anda hari ini untuk memulai absensi.
-          </CardDescription>
+          <CardTitle>Absensi Harian</CardTitle>
+          <CardDescription>Pilih kelas dan tanggal untuk mencatat kehadiran siswa.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="w-full md:w-1/3">
-            <Select onValueChange={handleScheduleSelect} disabled={schedules.length === 0 || loading} value={selectedSchedule ? selectedSchedule.id.toString() : ""}>
-              <SelectTrigger>
-                <SelectValue placeholder={loading ? "Memuat jadwal..." : "Pilih Jadwal Mengajar"} />
-              </SelectTrigger>
-              <SelectContent>
-                {schedules.map((schedule) => (
-                  <SelectItem key={schedule.id} value={schedule.id.toString()}>
-                    {`${schedule.class_name} - ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+          <div className="flex flex-col md:flex-row gap-4">
+            <Select value={selectedClass} onValueChange={setSelectedClass}>
+              <SelectTrigger className="w-full md:w-[200px]"><SelectValue placeholder="Pilih Kelas" /></SelectTrigger>
+              <SelectContent>{classes.map(c => <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
+            <Input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="w-full md:w-[180px]" />
+            <Button onClick={fetchStudentsForAttendance} disabled={!selectedClass || !selectedDate || loading}>
+              {loading ? "Memuat..." : "Tampilkan Siswa"}
+            </Button>
           </div>
 
-          {selectedSchedule && (
+          {students.length > 0 && (
             <div>
-              <h3 className="text-lg font-semibold mb-4">
-                Daftar Siswa - {selectedSchedule.class_name}
-              </h3>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -199,36 +126,27 @@ export default function AttendancePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {loading ? (
-                    <TableRow><TableCell colSpan={3} className="text-center">Memuat siswa...</TableCell></TableRow>
-                  ) : (
-                    students.map((student, index) => (
-                      <TableRow key={student.id}>
-                        <TableCell>{index + 1}</TableCell>
-                        <TableCell className="font-medium">{student.name}</TableCell>
-                        <TableCell>
-                          <Select
-                            value={attendance.get(student.id) || 'Hadir'}
-                            onValueChange={(value) => handleStatusChange(student.id, value as AttendanceStatus)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Hadir">Hadir</SelectItem>
-                              <SelectItem value="Sakit">Sakit</SelectItem>
-                              <SelectItem value="Izin">Izin</SelectItem>
-                              <SelectItem value="Alfa">Alfa</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
+                  {students.map((student, index) => (
+                    <TableRow key={student.id}>
+                      <TableCell>{index + 1}</TableCell>
+                      <TableCell className="font-medium">{student.name}</TableCell>
+                      <TableCell>
+                        <Select value={attendance.get(student.id) || 'Hadir'} onValueChange={(value) => handleStatusChange(student.id, value as AttendanceStatus)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Hadir">Hadir</SelectItem>
+                            <SelectItem value="Sakit">Sakit</SelectItem>
+                            <SelectItem value="Izin">Izin</SelectItem>
+                            <SelectItem value="Alfa">Alfa</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
               <div className="flex justify-end mt-6">
-                <Button onClick={handleSaveAttendance} disabled={students.length === 0 || isSaving}>
+                <Button onClick={handleSaveAttendance} disabled={isSaving}>
                   {isSaving ? "Menyimpan..." : "Simpan Absensi"}
                 </Button>
               </div>

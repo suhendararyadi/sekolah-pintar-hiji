@@ -10,6 +10,7 @@ import {
   CalendarDays,
   Users,
   ListTodo,
+  BarChart3, // Ikon baru untuk laporan
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -25,13 +26,18 @@ import type { SessionPayload } from "@/lib/session";
 
 // Definisikan semua item navigasi dalam sebuah array
 const navItems = [
+  // Menu Umum
   { href: "/dashboard", label: "Dashboard", icon: Home, roles: ["admin", "guru", "siswa"] },
   
-  // PERUBAHAN: Jadwal sekarang bisa diakses oleh admin dan guru
-  { href: "/dashboard/schedules", label: "Jadwal", icon: CalendarDays, roles: ["admin", "guru"] },
-  
+  // Menu Khusus Admin
+  // PERBAIKAN: Hapus menu Manajemen Jadwal untuk sementara agar lebih rapi
+  // { href: "/dashboard/schedules", label: "Manajemen Jadwal", icon: CalendarDays, roles: ["admin"] },
   { href: "/dashboard/users", label: "Manajemen Pengguna", icon: Users, roles: ["admin"] },
-  { href: "/dashboard/attendance", label: "Absensi", icon: LineChart, roles: ["guru"] },
+  { href: "/dashboard/attendance", label: "Absensi Harian", icon: LineChart, roles: ["admin"] },
+  { href: "/dashboard/attendance/summary", label: "Laporan Absensi", icon: BarChart3, roles: ["admin"] },
+
+  // Menu untuk Guru & Siswa (fitur mendatang)
+  { href: "#", label: "Jadwal Pelajaran", icon: CalendarDays, roles: ["guru", "siswa"] },
   { href: "#", label: "Tugas", icon: ListTodo, roles: ["guru", "siswa"] },
   { href: "#", label: "Nilai", icon: BookOpen, roles: ["guru", "siswa"] },
 ];

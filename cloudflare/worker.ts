@@ -405,90 +405,133 @@ app.delete('/api/schedules/:id', authMiddleware, async (c) => {
 
 
 // ===================================================================
-// ENDPOINT UNTUK FITUR ABSENSI
+// PERUBAHAN TOTAL PADA FITUR ABSENSI
 // ===================================================================
 
-// Mendapatkan jadwal mengajar guru (semua hari untuk development)
-app.get('/api/attendance/schedules', authMiddleware, async (c) => {
-  const user = c.get('user');
-  if (user.role !== 'guru' && user.role !== 'admin') {
-    return c.json({ success: true, schedules: [] });
+// Endpoint untuk mengambil siswa dan status kehadiran mereka berdasarkan kelas dan tanggal
+app.get('/api/attendance/class/:classId', authMiddleware, async (c) => {
+  const classId = c.req.param('classId');
+  const date = c.req.query('date'); // Format YYYY-MM-DD
+
+  if (!date) {
+    return c.json({ success: false, message: 'Parameter tanggal wajib diisi.' }, 400);
   }
 
   try {
     const { results } = await c.env.DB.prepare(`
       SELECT
-        s.id, c.name as class_name, sub.name as subject_name, s.start_time, s.end_time
-      FROM schedules s
-      JOIN classes c ON s.class_id = c.id
-      JOIN subjects sub ON s.subject_id = sub.id
-      WHERE s.teacher_id = ?
-      ORDER BY s.day_of_week, s.start_time ASC
-    `).bind(user.sub).all();
-    
-    return c.json({ success: true, schedules: results });
-  } catch (e) {
-    console.error("Fetch Schedules Error:", e);
-    return c.json({ success: false, message: 'Gagal mengambil jadwal' }, 500);
-  }
-});
-
-// Mendapatkan daftar siswa DENGAN status kehadiran yang sudah ada
-app.get('/api/attendance/schedules/:scheduleId/students', authMiddleware, async (c) => {
-  const scheduleId = c.req.param('scheduleId');
-  const todayDate = new Date().toISOString().split('T')[0];
-  
-  try {
-    const schedule = await c.env.DB.prepare("SELECT class_id FROM schedules WHERE id = ?").bind(scheduleId).first<{ class_id: number }>();
-    if (!schedule) {
-      return c.json({ success: false, message: "Jadwal tidak ditemukan" }, 404);
-    }
-
-    const { results } = await c.env.DB.prepare(`
-      SELECT u.id, u.name, ar.status
+        u.id,
+        u.name,
+        ar.status
       FROM users u
       JOIN student_profiles sp ON u.id = sp.user_id
       LEFT JOIN attendance_records ar ON u.id = ar.student_id
-                                     AND ar.schedule_id = ?
                                      AND ar.attendance_date = ?
-      WHERE sp.class_id = ?
+      WHERE sp.class_id = ? AND u.role = 'siswa'
       ORDER BY u.name ASC
-    `).bind(scheduleId, todayDate, schedule.class_id).all();
+    `).bind(date, classId).all();
 
     return c.json({ success: true, students: results });
   } catch (e) {
-    console.error("Fetch Students Error:", e);
+    console.error("Fetch Students for Attendance Error:", e);
     return c.json({ success: false, message: 'Gagal mengambil data siswa' }, 500);
   }
 });
 
-// Menyimpan catatan absensi
+// Endpoint untuk menyimpan catatan absensi harian
 app.post('/api/attendance/records', authMiddleware, async (c) => {
   const user = c.get('user');
-  const { schedule_id, records } = await c.req.json<{ schedule_id: number, records: { student_id: number, status: string }[] }>();
+  if (user.role !== 'admin') return c.json({ success: false, message: 'Forbidden' }, 403);
 
-  if (!schedule_id || !records || records.length === 0) {
+  const { class_id, date, records } = await c.req.json<{ class_id: number, date: string, records: { student_id: number, status: string }[] }>();
+
+  if (!class_id || !date || !records || records.length === 0) {
     return c.json({ success: false, message: 'Data tidak lengkap' }, 400);
   }
-
-  const todayDate = new Date().toISOString().split('T')[0];
 
   try {
     const stmts = records.map(record => {
       return c.env.DB.prepare(`
-        INSERT INTO attendance_records (student_id, schedule_id, attendance_date, status, recorded_by_teacher_id)
+        INSERT INTO attendance_records (student_id, class_id, attendance_date, status, recorded_by_admin_id)
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(student_id, schedule_id, attendance_date) DO UPDATE SET
+        ON CONFLICT(student_id, attendance_date) DO UPDATE SET
           status=excluded.status
-      `).bind(record.student_id, schedule_id, todayDate, record.status, user.sub);
+      `).bind(record.student_id, class_id, date, record.status, user.sub);
     });
 
     await c.env.DB.batch(stmts);
-
     return c.json({ success: true, message: 'Absensi berhasil disimpan' });
   } catch (e) {
     console.error("Save Attendance Error:", e);
     return c.json({ success: false, message: 'Gagal menyimpan absensi' }, 500);
+  }
+});
+
+
+// ===================================================================
+// PERUBAHAN BARU: Endpoint untuk Laporan Absensi
+// ===================================================================
+
+app.get('/api/attendance/summary', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin' && user.role !== 'guru') {
+    return c.json({ success: false, message: 'Forbidden' }, 403);
+  }
+
+  const classId = c.req.query('class_id');
+  const month = c.req.query('month'); // Format: 1-12
+  const year = c.req.query('year');   // Format: YYYY
+
+  if (!classId || !month || !year) {
+    return c.json({ success: false, message: 'Parameter class_id, month, dan year wajib diisi.' }, 400);
+  }
+
+  // Hitung tanggal awal dan akhir bulan
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const lastDate = `${year}-${String(month).padStart(2, '0')}-${endDate}`;
+
+  try {
+    // 1. Ambil semua siswa di kelas tersebut
+    const studentsResponse = await c.env.DB.prepare(
+      `SELECT id, name FROM users WHERE id IN (SELECT user_id FROM student_profiles WHERE class_id = ?)`
+    ).bind(classId).all<{id: number, name: string}>();
+    
+    if (!studentsResponse.results || studentsResponse.results.length === 0) {
+        return c.json({ success: true, summary: [] });
+    }
+
+    // 2. Ambil semua catatan kehadiran untuk kelas tersebut di bulan yang dipilih
+    const attendanceResponse = await c.env.DB.prepare(
+      `SELECT student_id, attendance_date, status
+       FROM attendance_records
+       WHERE student_id IN (SELECT user_id FROM student_profiles WHERE class_id = ?)
+       AND attendance_date BETWEEN ? AND ?`
+    ).bind(classId, startDate, lastDate).all<{student_id: number, attendance_date: string, status: string}>();
+
+    // 3. Olah data di server untuk memudahkan frontend
+    const attendanceMap = new Map<number, Map<string, string>>();
+    (attendanceResponse.results || []).forEach(record => {
+        if (!attendanceMap.has(record.student_id)) {
+            attendanceMap.set(record.student_id, new Map());
+        }
+        attendanceMap.get(record.student_id)?.set(record.attendance_date, record.status);
+    });
+
+    const summary = studentsResponse.results.map(student => {
+        const records = attendanceMap.get(student.id) || new Map();
+        return {
+            student_id: student.id,
+            student_name: student.name,
+            records: Object.fromEntries(records.entries()) // Ubah Map menjadi objek { 'YYYY-MM-DD': 'Status' }
+        };
+    });
+
+    return c.json({ success: true, summary });
+
+  } catch (e) {
+    console.error("Fetch Attendance Summary Error:", e);
+    return c.json({ success: false, message: 'Gagal mengambil laporan absensi' }, 500);
   }
 });
 

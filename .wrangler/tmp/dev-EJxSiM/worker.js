@@ -2514,72 +2514,101 @@ app.delete("/api/schedules/:id", authMiddleware, async (c) => {
     return c.json({ success: false, message: "Gagal menghapus jadwal" }, 500);
   }
 });
-app.get("/api/attendance/schedules", authMiddleware, async (c) => {
-  const user = c.get("user");
-  if (user.role !== "guru" && user.role !== "admin") {
-    return c.json({ success: true, schedules: [] });
+app.get("/api/attendance/class/:classId", authMiddleware, async (c) => {
+  const classId = c.req.param("classId");
+  const date = c.req.query("date");
+  if (!date) {
+    return c.json({ success: false, message: "Parameter tanggal wajib diisi." }, 400);
   }
   try {
     const { results } = await c.env.DB.prepare(`
       SELECT
-        s.id, c.name as class_name, sub.name as subject_name, s.start_time, s.end_time
-      FROM schedules s
-      JOIN classes c ON s.class_id = c.id
-      JOIN subjects sub ON s.subject_id = sub.id
-      WHERE s.teacher_id = ?
-      ORDER BY s.day_of_week, s.start_time ASC
-    `).bind(user.sub).all();
-    return c.json({ success: true, schedules: results });
-  } catch (e) {
-    console.error("Fetch Schedules Error:", e);
-    return c.json({ success: false, message: "Gagal mengambil jadwal" }, 500);
-  }
-});
-app.get("/api/attendance/schedules/:scheduleId/students", authMiddleware, async (c) => {
-  const scheduleId = c.req.param("scheduleId");
-  const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  try {
-    const schedule = await c.env.DB.prepare("SELECT class_id FROM schedules WHERE id = ?").bind(scheduleId).first();
-    if (!schedule) {
-      return c.json({ success: false, message: "Jadwal tidak ditemukan" }, 404);
-    }
-    const { results } = await c.env.DB.prepare(`
-      SELECT u.id, u.name, ar.status
+        u.id,
+        u.name,
+        ar.status
       FROM users u
       JOIN student_profiles sp ON u.id = sp.user_id
       LEFT JOIN attendance_records ar ON u.id = ar.student_id
-                                     AND ar.schedule_id = ?
                                      AND ar.attendance_date = ?
-      WHERE sp.class_id = ?
+      WHERE sp.class_id = ? AND u.role = 'siswa'
       ORDER BY u.name ASC
-    `).bind(scheduleId, todayDate, schedule.class_id).all();
+    `).bind(date, classId).all();
     return c.json({ success: true, students: results });
   } catch (e) {
-    console.error("Fetch Students Error:", e);
+    console.error("Fetch Students for Attendance Error:", e);
     return c.json({ success: false, message: "Gagal mengambil data siswa" }, 500);
   }
 });
 app.post("/api/attendance/records", authMiddleware, async (c) => {
   const user = c.get("user");
-  const { schedule_id, records } = await c.req.json();
-  if (!schedule_id || !records || records.length === 0) {
+  if (user.role !== "admin") return c.json({ success: false, message: "Forbidden" }, 403);
+  const { class_id, date, records } = await c.req.json();
+  if (!class_id || !date || !records || records.length === 0) {
     return c.json({ success: false, message: "Data tidak lengkap" }, 400);
   }
-  const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
   try {
     const stmts = records.map((record) => {
       return c.env.DB.prepare(`
-        INSERT INTO attendance_records (student_id, schedule_id, attendance_date, status, recorded_by_teacher_id)
+        INSERT INTO attendance_records (student_id, class_id, attendance_date, status, recorded_by_admin_id)
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(student_id, schedule_id, attendance_date) DO UPDATE SET
+        ON CONFLICT(student_id, attendance_date) DO UPDATE SET
           status=excluded.status
-      `).bind(record.student_id, schedule_id, todayDate, record.status, user.sub);
+      `).bind(record.student_id, class_id, date, record.status, user.sub);
     });
     await c.env.DB.batch(stmts);
     return c.json({ success: true, message: "Absensi berhasil disimpan" });
   } catch (e) {
     console.error("Save Attendance Error:", e);
     return c.json({ success: false, message: "Gagal menyimpan absensi" }, 500);
+  }
+});
+app.get("/api/attendance/summary", authMiddleware, async (c) => {
+  const user = c.get("user");
+  if (user.role !== "admin" && user.role !== "guru") {
+    return c.json({ success: false, message: "Forbidden" }, 403);
+  }
+  const classId = c.req.query("class_id");
+  const month = c.req.query("month");
+  const year = c.req.query("year");
+  if (!classId || !month || !year) {
+    return c.json({ success: false, message: "Parameter class_id, month, dan year wajib diisi." }, 400);
+  }
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endDate = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const lastDate = `${year}-${String(month).padStart(2, "0")}-${endDate}`;
+  try {
+    const studentsResponse = await c.env.DB.prepare(
+      `SELECT id, name FROM users WHERE id IN (SELECT user_id FROM student_profiles WHERE class_id = ?)`
+    ).bind(classId).all();
+    if (!studentsResponse.results || studentsResponse.results.length === 0) {
+      return c.json({ success: true, summary: [] });
+    }
+    const attendanceResponse = await c.env.DB.prepare(
+      `SELECT student_id, attendance_date, status
+       FROM attendance_records
+       WHERE student_id IN (SELECT user_id FROM student_profiles WHERE class_id = ?)
+       AND attendance_date BETWEEN ? AND ?`
+    ).bind(classId, startDate, lastDate).all();
+    const attendanceMap = /* @__PURE__ */ new Map();
+    (attendanceResponse.results || []).forEach((record) => {
+      if (!attendanceMap.has(record.student_id)) {
+        attendanceMap.set(record.student_id, /* @__PURE__ */ new Map());
+      }
+      attendanceMap.get(record.student_id)?.set(record.attendance_date, record.status);
+    });
+    const summary = studentsResponse.results.map((student) => {
+      const records = attendanceMap.get(student.id) || /* @__PURE__ */ new Map();
+      return {
+        student_id: student.id,
+        student_name: student.name,
+        records: Object.fromEntries(records.entries())
+        // Ubah Map menjadi objek { 'YYYY-MM-DD': 'Status' }
+      };
+    });
+    return c.json({ success: true, summary });
+  } catch (e) {
+    console.error("Fetch Attendance Summary Error:", e);
+    return c.json({ success: false, message: "Gagal mengambil laporan absensi" }, 500);
   }
 });
 var worker_default = app;
@@ -2625,7 +2654,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-177dtp/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-x6M9U8/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -2657,7 +2686,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-177dtp/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-x6M9U8/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;
